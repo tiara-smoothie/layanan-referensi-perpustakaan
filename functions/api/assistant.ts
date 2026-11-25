@@ -21,8 +21,8 @@ interface GoogleModelInfo {
 }
 
 const PRIMARY_MODEL = 'gemini-2.5-flash';
-const PER_MODEL_TIMEOUT_MS = 7500;
-const TOTAL_BUDGET_MS = 21000;
+const PER_MODEL_TIMEOUT_MS = 12000;
+const TOTAL_BUDGET_MS = 25000;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -48,7 +48,7 @@ async function discoverFallbackModels(
   excludeModel: string
 ): Promise<string[]> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3500);
+  const timeoutId = setTimeout(() => controller.abort(), 2500);
   try {
     const res = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models?pageSize=100',
@@ -116,11 +116,25 @@ async function discoverFallbackModels(
   }
 }
 
+function getThinkingConfigForModel(
+  model: string
+): Record<string, unknown> | undefined {
+  const lower = model.toLowerCase();
+  if (lower.includes('2.5-flash')) {
+    return { thinkingBudget: 0 };
+  }
+  if (lower.includes('gemini-3') || lower.includes('gemini-4')) {
+    return { thinkingLevel: 'LOW' };
+  }
+  return undefined;
+}
+
 async function callGeminiModel(
   model: string,
   apiKey: string,
   contents: { role: 'user' | 'model'; parts: { text: string }[] }[],
-  timeoutMs: number
+  timeoutMs: number,
+  skipThinkingConfig = false
 ): Promise<
   | { ok: true; text: string }
   | { ok: false; status: number; errorText: string }
@@ -146,8 +160,11 @@ async function callGeminiModel(
     },
   };
 
-  if (model.startsWith('gemini-2.5-flash') && !model.includes('lite')) {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  if (!skipThinkingConfig) {
+    const thinkingConfig = getThinkingConfigForModel(model);
+    if (thinkingConfig) {
+      generationConfig.thinkingConfig = thinkingConfig;
+    }
   }
 
   const requestPayload = {
@@ -184,6 +201,14 @@ async function callGeminiModel(
         }
       } catch {
         // Keep raw error text
+      }
+      if (
+        !skipThinkingConfig &&
+        geminiRes.status === 400 &&
+        errorText.toLowerCase().includes('thinking')
+      ) {
+        clearTimeout(timeoutId);
+        return callGeminiModel(model, apiKey, contents, timeoutMs, true);
       }
       return { ok: false, status: geminiRes.status, errorText };
     }

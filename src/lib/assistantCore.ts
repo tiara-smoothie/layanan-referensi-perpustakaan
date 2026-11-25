@@ -60,25 +60,26 @@ export function buildConversationTurns(
     type: ref.type,
     availability: ref.availability,
     keywords: ref.keywords,
-    summary: ref.abstract.slice(0, 140),
+    summary: ref.abstract.slice(0, 100),
   }));
 
   const priorTurns: { role: 'user' | 'model'; parts: { text: string }[] }[] = [];
   if (Array.isArray(payload.history)) {
     const cleaned = payload.history
       .filter((h) => h && typeof h.text === 'string' && h.text.trim() !== '')
-      .slice(-10);
+      .slice(-8);
 
     for (const item of cleaned) {
       const role: 'user' | 'model' = item.sender === 'user' ? 'user' : 'model';
       if (priorTurns.length === 0 && role === 'model') {
         continue;
       }
+      const trimmedText = item.text.trim().slice(0, 1000);
       const prev = priorTurns[priorTurns.length - 1];
       if (prev && prev.role === role) {
-        prev.parts[0].text += `\n\n${item.text.trim()}`;
+        prev.parts[0].text += `\n\n${trimmedText}`;
       } else {
-        priorTurns.push({ role, parts: [{ text: item.text.trim() }] });
+        priorTurns.push({ role, parts: [{ text: trimmedText }] });
       }
     }
     if (
@@ -90,19 +91,19 @@ export function buildConversationTurns(
   }
 
   const currentPrompt = `
-Konteks Katalog Terverifikasi Perpustakaan LibraMind (JSON):
-${JSON.stringify(catalogSummary, null, 2)}
+Katalog LibraMind (JSON ringkas):
+${JSON.stringify(catalogSummary)}
 
-Filter Kategori Koleksi Aktif: ${categoryFilter}
+Filter Kategori Aktif: ${categoryFilter}
 
 Pesan Mahasiswa Saat Ini:
 "${message}"
 
 Instruksi Output (kembalikan JSON valid sesuai skema):
-1. "reply": Berikan respons akademik yang terstruktur, jelas, dan membantu (dalam Bahasa Indonesia jika pesan berbahasa Indonesia, atau Bahasa Inggris jika pesan berbahasa Inggris). Jelaskan konsep/metode/arahan riset yang ditanyakan, relevansi referensi katalog (jika ada yang cocok), atau arahkan strategi pencarian bila topik berada di luar katalog lokal—dengan menegaskan mana yang merupakan saran pencarian dan tanpa mengarang kutipan/DOI palsu.
-2. "recommendedIds": Pilih 0 hingga 5 ID referensi dari Katalog LibraMind JSON di atas yang benar-benar relevan (prioritaskan jenis koleksi "${categoryFilter}" jika bukan "Semua"). Jangan memaksa memilih ID yang tidak relevan.
-3. "searchQueries": Berikan 2 hingga 3 saran kueri/kata kunci pencarian untuk database akademik (seperti Google Scholar, SINTA, Garuda, atau Scopus) sebagai saran pencarian (search suggestions).
-4. "suggestedTopics": Berikan 3 saran pertanyaan atau topik lanjutan singkat sesuai bahasa mahasiswa agar percakapan dapat dilanjutkan.
+1. "reply": Berikan jawaban akademik yang jelas, terstruktur, dan ringkas (±150-220 kata dalam poin-poin rapi, dalam bahasa yang sama dengan pesan mahasiswa). Jelaskan konsep/arahan riset, relevansi item katalog (jika ada yang cocok), atau strategi pencarian bila topik di luar katalog tanpa mengarang kutipan/DOI palsu.
+2. "recommendedIds": Pilih 0 hingga 5 ID referensi dari Katalog LibraMind JSON yang benar-benar relevan (prioritaskan jenis "${categoryFilter}" jika bukan "Semua").
+3. "searchQueries": Berikan 2 hingga 3 saran kueri pencarian untuk database akademik (Google Scholar, SINTA, Garuda, Scopus) sebagai saran pencarian.
+4. "suggestedTopics": Berikan 3 saran pertanyaan/topik lanjutan singkat sesuai bahasa mahasiswa.
 `.trim();
 
   return [

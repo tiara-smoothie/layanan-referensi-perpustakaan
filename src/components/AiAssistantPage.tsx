@@ -90,7 +90,7 @@ export function AiAssistantPage({
 
     try {
       const controller = new AbortController();
-      const clientTimeout = setTimeout(() => controller.abort(), 25000);
+      const clientTimeout = setTimeout(() => controller.abort(), 28000);
       let response: Response;
       try {
         response = await fetch('/api/assistant', {
