@@ -89,15 +89,23 @@ export function AiAssistantPage({
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/assistant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: trimmed,
-          categoryFilter,
-          history: priorHistory,
-        }),
-      });
+      const controller = new AbortController();
+      const clientTimeout = setTimeout(() => controller.abort(), 25000);
+      let response: Response;
+      try {
+        response = await fetch('/api/assistant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: trimmed,
+            categoryFilter,
+            history: priorHistory,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(clientTimeout);
+      }
 
       const rawBody = await response.text();
       const contentType = response.headers.get('content-type') || '';
@@ -116,6 +124,12 @@ export function AiAssistantPage({
       }
 
       if (!response.ok) {
+        if (response.status === 522 || response.status === 504) {
+          throw new Error(
+            data?.error ||
+              `Koneksi ke server melewati batas waktu (${response.status}). Silakan klik "Coba Kirim Ulang".`
+          );
+        }
         throw new Error(
           data?.error ||
             `Permintaan gagal dengan status ${response.status}. Silakan coba lagi.`
@@ -156,8 +170,11 @@ export function AiAssistantPage({
       };
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err: unknown) {
-      const errMsg =
-        err instanceof Error
+      const isTimeout =
+        err instanceof Error && err.name === 'AbortError';
+      const errMsg = isTimeout
+        ? 'Permintaan melebihi batas waktu (timeout). Silakan klik "Coba Kirim Ulang".'
+        : err instanceof Error
           ? err.message
           : 'Tidak dapat terhubung ke layanan Asisten AI. Periksa koneksi jaringan Anda.';
       setMessages((prev) => [

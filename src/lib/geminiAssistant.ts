@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import {
   SYSTEM_INSTRUCTION,
   buildConversationTurns,
@@ -69,6 +69,9 @@ export async function runGeminiAssistant(
         contents,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
+          ...(activeModel === 'gemini-4-hydrogen'
+            ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+            : {}),
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,

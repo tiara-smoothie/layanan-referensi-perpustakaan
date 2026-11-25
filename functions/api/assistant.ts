@@ -16,11 +16,11 @@ interface PagesFunctionContext {
 }
 
 const CLOUDFLARE_MODELS = [
-  'gemini-4-hydrogen',
-  'gemini-3.1-flash-lite',
   'gemini-2.5-flash',
   'gemini-2.5-flash-lite',
 ];
+
+const PER_MODEL_TIMEOUT_MS = 9500;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -71,12 +71,16 @@ export async function onRequestPost(
 
     const contents = buildConversationTurns(body);
 
-    const requestPayload = {
-      systemInstruction: {
-        parts: [{ text: SYSTEM_INSTRUCTION }],
-      },
-      contents,
-      generationConfig: {
+    let lastStatus = 500;
+    let lastErrorText = 'Gagal menghubungi Gemini API.';
+    let lastModel = CLOUDFLARE_MODELS[0];
+
+    for (let i = 0; i < CLOUDFLARE_MODELS.length; i++) {
+      const model = CLOUDFLARE_MODELS[i];
+      lastModel = model;
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+      const generationConfig: Record<string, unknown> = {
         responseMimeType: 'application/json',
         responseSchema: {
           type: 'OBJECT',
@@ -93,17 +97,26 @@ export async function onRequestPost(
             'suggestedTopics',
           ],
         },
-      },
-    };
+      };
 
-    let lastStatus = 500;
-    let lastErrorText = 'Gagal menghubungi Gemini API.';
-    let lastModel = CLOUDFLARE_MODELS[0];
+      // Disable thinking latency on gemini-2.5-flash so responses arrive in ~1-3s
+      if (model === 'gemini-2.5-flash') {
+        generationConfig.thinkingConfig = { thinkingBudget: 0 };
+      }
 
-    for (let i = 0; i < CLOUDFLARE_MODELS.length; i++) {
-      const model = CLOUDFLARE_MODELS[i];
-      lastModel = model;
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+      const requestPayload = {
+        systemInstruction: {
+          parts: [{ text: SYSTEM_INSTRUCTION }],
+        },
+        contents,
+        generationConfig,
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        PER_MODEL_TIMEOUT_MS
+      );
 
       let geminiRes: Response;
       try {
@@ -114,18 +127,30 @@ export async function onRequestPost(
             'x-goog-api-key': apiKey,
           },
           body: JSON.stringify(requestPayload),
+          signal: controller.signal,
         });
       } catch (networkErr: unknown) {
-        lastStatus = 503;
-        lastErrorText =
-          networkErr instanceof Error
+        clearTimeout(timeoutId);
+        const isTimeout =
+          networkErr instanceof Error && networkErr.name === 'AbortError';
+        lastStatus = 504;
+        lastErrorText = isTimeout
+          ? 'Permintaan ke model Gemini melebihi batas waktu.'
+          : networkErr instanceof Error
             ? networkErr.message
             : 'Koneksi jaringan ke Gemini API terputus.';
+
         if (i < CLOUDFLARE_MODELS.length - 1) {
-          await new Promise((r) => setTimeout(r, 500 * (i + 1)));
           continue;
         }
-        break;
+        return jsonResponse(
+          {
+            error: `Koneksi ke layanan Gemini terlalu lama (${lastModel}). Silakan klik "Coba Kirim Ulang".`,
+          },
+          504
+        );
+      } finally {
+        clearTimeout(timeoutId);
       }
 
       const resText = await geminiRes.text();
@@ -146,7 +171,7 @@ export async function onRequestPost(
           geminiRes.status >= 500;
 
         if (shouldFallback && i < CLOUDFLARE_MODELS.length - 1) {
-          await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+          await new Promise((r) => setTimeout(r, 250));
           continue;
         }
 
@@ -170,6 +195,9 @@ export async function onRequestPost(
         .join('');
 
       if (!textParts.trim()) {
+        if (i < CLOUDFLARE_MODELS.length - 1) {
+          continue;
+        }
         return jsonResponse(
           {
             error:
@@ -184,7 +212,10 @@ export async function onRequestPost(
     }
 
     const classified = classifyGeminiError(lastErrorText, lastStatus);
-    return jsonResponse({ error: classified.error }, classified.status);
+    return jsonResponse(
+      { error: `${classified.error} (${lastModel}, HTTP ${lastStatus})` },
+      classified.status
+    );
   } catch (err: unknown) {
     const msg =
       err instanceof Error
