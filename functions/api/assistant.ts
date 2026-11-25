@@ -16,9 +16,10 @@ interface PagesFunctionContext {
 }
 
 const CLOUDFLARE_MODELS = [
+  'gemini-4-hydrogen',
+  'gemini-3.1-flash-lite',
   'gemini-2.5-flash',
   'gemini-2.5-flash-lite',
-  'gemini-4-hydrogen',
 ];
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -97,9 +98,11 @@ export async function onRequestPost(
 
     let lastStatus = 500;
     let lastErrorText = 'Gagal menghubungi Gemini API.';
+    let lastModel = CLOUDFLARE_MODELS[0];
 
     for (let i = 0; i < CLOUDFLARE_MODELS.length; i++) {
       const model = CLOUDFLARE_MODELS[i];
+      lastModel = model;
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
       let geminiRes: Response;
@@ -119,7 +122,7 @@ export async function onRequestPost(
             ? networkErr.message
             : 'Koneksi jaringan ke Gemini API terputus.';
         if (i < CLOUDFLARE_MODELS.length - 1) {
-          await new Promise((r) => setTimeout(r, 350));
+          await new Promise((r) => setTimeout(r, 500 * (i + 1)));
           continue;
         }
         break;
@@ -143,12 +146,15 @@ export async function onRequestPost(
           geminiRes.status >= 500;
 
         if (shouldFallback && i < CLOUDFLARE_MODELS.length - 1) {
-          await new Promise((r) => setTimeout(r, 350));
+          await new Promise((r) => setTimeout(r, 500 * (i + 1)));
           continue;
         }
 
         const classified = classifyGeminiError(lastErrorText, lastStatus);
-        return jsonResponse({ error: classified.error }, classified.status);
+        return jsonResponse(
+          { error: `${classified.error} (${lastModel}, HTTP ${lastStatus})` },
+          classified.status
+        );
       }
 
       const geminiJson = JSON.parse(resText) as {

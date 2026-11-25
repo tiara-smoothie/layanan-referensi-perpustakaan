@@ -60,7 +60,7 @@ export function buildConversationTurns(
     type: ref.type,
     availability: ref.availability,
     keywords: ref.keywords,
-    abstract: ref.abstract,
+    summary: ref.abstract.slice(0, 140),
   }));
 
   const priorTurns: { role: 'user' | 'model'; parts: { text: string }[] }[] = [];
