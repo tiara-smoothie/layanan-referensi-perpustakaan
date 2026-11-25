@@ -21,7 +21,8 @@ interface GoogleModelInfo {
 }
 
 const PRIMARY_MODEL = 'gemini-2.5-flash';
-const PER_MODEL_TIMEOUT_MS = 11000;
+const PER_MODEL_TIMEOUT_MS = 7500;
+const TOTAL_BUDGET_MS = 21000;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -47,7 +48,7 @@ async function discoverFallbackModels(
   excludeModel: string
 ): Promise<string[]> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000);
+  const timeoutId = setTimeout(() => controller.abort(), 3500);
   try {
     const res = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models?pageSize=100',
@@ -66,7 +67,6 @@ async function discoverFallbackModels(
       .filter((id) => {
         if (!id || id === excludeModel) return false;
         const lower = id.toLowerCase();
-        // Exclude non-text, deprecated, or specialized modalities
         if (
           lower.includes('tts') ||
           lower.includes('image') ||
@@ -91,20 +91,24 @@ async function discoverFallbackModels(
         );
       });
 
-    // Prefer fast/lite models first so responses stay well under Cloudflare timeouts
+    // Prioritize stable GA models BEFORE -preview / -exp models
     const score = (id: string): number => {
       const l = id.toLowerCase();
-      if (l.includes('4-hydrogen')) return 10;
-      if (l.includes('3.1-flash-lite')) return 20;
-      if (l.includes('2.5-flash-lite')) return 30;
-      if (l.includes('flash-lite')) return 35;
-      if (l.includes('3-flash')) return 40;
-      if (l.includes('flash')) return 50;
-      if (l.includes('pro')) return 70;
-      return 80;
+      const isPreview = l.includes('preview') || l.includes('exp');
+      const penalty = isPreview ? 100 : 0;
+
+      if (l.includes('4-hydrogen')) return penalty + 10;
+      if (l.includes('2.5-flash-lite')) return penalty + 15;
+      if (l.includes('flash-lite')) return penalty + 20;
+      if (l.includes('flash-latest')) return penalty + 25;
+      if (l.includes('3-flash')) return penalty + 30;
+      if (l.includes('flash')) return penalty + 35;
+      if (l.includes('2.5-pro')) return penalty + 45;
+      if (l.includes('pro')) return penalty + 55;
+      return penalty + 70;
     };
 
-    return candidates.sort((a, b) => score(a) - score(b)).slice(0, 2);
+    return candidates.sort((a, b) => score(a) - score(b)).slice(0, 5);
   } catch {
     return [];
   } finally {
@@ -115,7 +119,8 @@ async function discoverFallbackModels(
 async function callGeminiModel(
   model: string,
   apiKey: string,
-  contents: { role: 'user' | 'model'; parts: { text: string }[] }[]
+  contents: { role: 'user' | 'model'; parts: { text: string }[] }[],
+  timeoutMs: number
 ): Promise<
   | { ok: true; text: string }
   | { ok: false; status: number; errorText: string }
@@ -154,7 +159,7 @@ async function callGeminiModel(
   };
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), PER_MODEL_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const geminiRes = await fetch(endpoint, {
@@ -223,6 +228,8 @@ async function callGeminiModel(
 export async function onRequestPost(
   context: PagesFunctionContext
 ): Promise<Response> {
+  const startedAt = Date.now();
+
   try {
     const body = (await context.request.json()) as AssistantRequestPayload;
     const message = (body.message || '').trim();
@@ -254,7 +261,8 @@ export async function onRequestPost(
     const primaryAttempt = await callGeminiModel(
       PRIMARY_MODEL,
       apiKey,
-      contents
+      contents,
+      PER_MODEL_TIMEOUT_MS
     );
     if (primaryAttempt.ok) {
       return jsonResponse(parseGeminiJsonOutput(primaryAttempt.text), 200);
@@ -273,11 +281,20 @@ export async function onRequestPost(
       );
     }
 
-    // 3. Dynamically discover live available fallback models on this API key
+    // 3. Dynamically discover live available fallback models (stable GA models prioritized)
     const fallbackModels = await discoverFallbackModels(apiKey, PRIMARY_MODEL);
     for (const model of fallbackModels) {
+      const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+      if (remaining < 2500) {
+        break;
+      }
       lastModel = model;
-      const attempt = await callGeminiModel(model, apiKey, contents);
+      const attempt = await callGeminiModel(
+        model,
+        apiKey,
+        contents,
+        Math.min(PER_MODEL_TIMEOUT_MS, remaining)
+      );
       if (attempt.ok) {
         return jsonResponse(parseGeminiJsonOutput(attempt.text), 200);
       }
