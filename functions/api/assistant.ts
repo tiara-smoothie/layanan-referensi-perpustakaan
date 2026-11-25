@@ -15,7 +15,11 @@ interface PagesFunctionContext {
   env: CloudflareEnv;
 }
 
-const CLOUDFLARE_MODELS = ['gemini-2.5-flash', 'gemini-4-hydrogen'];
+const CLOUDFLARE_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-4-hydrogen',
+];
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -23,6 +27,15 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
+    },
+  });
+}
+
+export async function onRequestOptions(): Promise<Response> {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      Allow: 'POST, OPTIONS',
     },
   });
 }

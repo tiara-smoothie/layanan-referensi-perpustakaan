@@ -1,7 +1,10 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+dotenv.config();
+dotenv.config({ path: '.env.local', override: true });
 import {
   runGeminiAssistant,
   type AssistantRequestPayload,
