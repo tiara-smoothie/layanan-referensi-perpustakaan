@@ -113,7 +113,9 @@ export interface ChatMessage {
   sender: 'user' | 'assistant';
   text: string;
   recommendedIds?: string[];
+  searchQueries?: string[];
   suggestedTopics?: string[];
   timestamp: string;
   isError?: boolean;
+  retryQuery?: string;
 }
