@@ -1,0 +1,6 @@
+{
+  "name": "LibraMind – Smart Library & Research Assistant",
+  "description": "Platform layanan perpustakaan cerdas untuk menemukan referensi akademik dengan asisten AI, mengelola folder riset, mengajukan validasi pustakawan, dan mengakses koleksi digital maupun fisik.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
