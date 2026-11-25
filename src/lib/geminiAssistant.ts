@@ -8,6 +8,7 @@ import {
   type AssistantRequestPayload,
   type AssistantSuccessResult,
 } from './assistantCore.ts';
+import { searchExternalAcademicReferences } from './externalSearch.ts';
 
 export type { AssistantRequestPayload };
 
@@ -58,6 +59,10 @@ export async function runGeminiAssistant(
   });
 
   const contents = buildConversationTurns(payload);
+  const externalSearchPromise = searchExternalAcademicReferences(
+    message,
+    payload.categoryFilter
+  );
   let lastError: AssistantErrorResult | null = null;
   const modelsToTry = [MODEL_NAME, 'gemini-3.1-flash-lite'];
 
@@ -114,9 +119,13 @@ export async function runGeminiAssistant(
         throw new Error('Model Gemini mengembalikan respons kosong.');
       }
 
+      const externalReferences = await externalSearchPromise;
       return {
         ok: true,
-        data: parseGeminiJsonOutput(rawText),
+        data: {
+          ...parseGeminiJsonOutput(rawText),
+          externalReferences,
+        },
       };
     } catch (err: unknown) {
       const rawMessage =

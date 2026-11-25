@@ -1,4 +1,5 @@
 import { ACADEMIC_REFERENCES } from '../data/references.ts';
+import type { ExternalReference } from '../types.ts';
 
 export interface AssistantHistoryItem {
   sender: string;
@@ -14,6 +15,7 @@ export interface AssistantRequestPayload {
 export interface AssistantSuccessResult {
   reply: string;
   recommendedIds: string[];
+  externalReferences?: ExternalReference[];
   searchQueries: string[];
   suggestedTopics: string[];
 }
@@ -41,9 +43,9 @@ KEMAMPUAN UTAMA ANDA:
    - Memberikan panduan mengevaluasi kredibilitas sumber ilmiah dan menyusun strategi pencarian pustaka.
 
 ATURAN KETAT ANTI-FABRIKASI (WAJIB DIPATUHI):
-- DILARANG KERAS mengarang atau memalsukan judul publikasi, nama penulis, tahun terbit, DOI, atau URL apa pun.
+- DILARANG KERAS mengarang atau memalsukan judul publikasi, nama penulis, tahun terbit, DOI, atau URL apa pun di dalam jawaban Anda.
 - Anda HANYA boleh mencantumkan ID dari Katalog LibraMind JSON pada field "recommendedIds" jika referensi tersebut benar-benar ada di katalog dan relevan dengan pertanyaan mahasiswa.
-- Jika tidak ada item di katalog LibraMind yang cocok dengan topik mahasiswa, kembalikan "recommendedIds": [] dan jelaskan secara jujur bahwa rekomendasi tambahan yang Anda berikan pada "searchQueries" adalah SARAN PENCARIAN (search suggestions) untuk ditelusuri di database akademik, bukan publikasi terverifikasi.
+- Untuk topik di luar koleksi katalog lokal, sistem LibraMind secara otomatis menampilkan hasil pencarian literatur eksternal terverifikasi (Crossref/OpenAlex) dan tautan Google Scholar/Garuda di panel referensi. Jadi kembalikan "recommendedIds": [] jika tidak ada item katalog lokal yang cocok, berikan panduan riset/teori/metode yang membantu di "reply", dan lengkapi "searchQueries" untuk penelusuran lanjutan.
 `.trim();
 
 export function buildConversationTurns(
@@ -100,7 +102,7 @@ Pesan Mahasiswa Saat Ini:
 "${message}"
 
 Instruksi Output (kembalikan JSON valid sesuai skema):
-1. "reply": Berikan jawaban akademik yang jelas, terstruktur, dan ringkas (±150-220 kata dalam poin-poin rapi, dalam bahasa yang sama dengan pesan mahasiswa). Jelaskan konsep/arahan riset, relevansi item katalog (jika ada yang cocok), atau strategi pencarian bila topik di luar katalog tanpa mengarang kutipan/DOI palsu.
+1. "reply": Berikan jawaban akademik yang jelas, padat, dan terstruktur (±100-160 kata dalam poin-poin inti, sesuai bahasa pesan mahasiswa). Jelaskan konsep/arahan riset, relevansi item katalog (jika ada yang cocok), atau strategi pencarian bila topik di luar katalog tanpa mengarang kutipan/DOI palsu.
 2. "recommendedIds": Pilih 0 hingga 5 ID referensi dari Katalog LibraMind JSON yang benar-benar relevan (prioritaskan jenis "${categoryFilter}" jika bukan "Semua").
 3. "searchQueries": Berikan 2 hingga 3 saran kueri pencarian untuk database akademik (Google Scholar, SINTA, Garuda, Scopus) sebagai saran pencarian.
 4. "suggestedTopics": Berikan 3 saran pertanyaan/topik lanjutan singkat sesuai bahasa mahasiswa.

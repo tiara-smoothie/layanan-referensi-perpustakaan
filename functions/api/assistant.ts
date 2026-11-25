@@ -5,6 +5,7 @@ import {
   parseGeminiJsonOutput,
   type AssistantRequestPayload,
 } from '../../src/lib/assistantCore.ts';
+import { searchExternalAcademicReferences } from '../../src/lib/externalSearch.ts';
 
 interface CloudflareEnv {
   GEMINI_API_KEY?: string;
@@ -20,9 +21,17 @@ interface GoogleModelInfo {
   supportedGenerationMethods?: string[];
 }
 
-const PRIMARY_MODEL = 'gemini-2.5-flash';
-const PER_MODEL_TIMEOUT_MS = 12000;
-const TOTAL_BUDGET_MS = 25000;
+const DEFAULT_PRIMARY_MODEL = 'gemini-2.5-flash';
+const PER_MODEL_TIMEOUT_MS = 9500;
+const TOTAL_BUDGET_MS = 24000;
+const DISCOVERY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let preferredModel = DEFAULT_PRIMARY_MODEL;
+let discoveryCache: {
+  keyPrefix: string;
+  models: string[];
+  fetchedAt: number;
+} | null = null;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -47,8 +56,17 @@ async function discoverFallbackModels(
   apiKey: string,
   excludeModel: string
 ): Promise<string[]> {
+  const keyPrefix = apiKey.slice(0, 10);
+  if (
+    discoveryCache &&
+    discoveryCache.keyPrefix === keyPrefix &&
+    Date.now() - discoveryCache.fetchedAt < DISCOVERY_CACHE_TTL_MS
+  ) {
+    return discoveryCache.models.filter((m) => m !== excludeModel);
+  }
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 2500);
+  const timeoutId = setTimeout(() => controller.abort(), 2200);
   try {
     const res = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models?pageSize=100',
@@ -108,12 +126,31 @@ async function discoverFallbackModels(
       return penalty + 70;
     };
 
-    return candidates.sort((a, b) => score(a) - score(b)).slice(0, 5);
+    const sorted = candidates.sort((a, b) => score(a) - score(b)).slice(0, 6);
+    if (sorted.length > 0) {
+      discoveryCache = {
+        keyPrefix,
+        models: sorted,
+        fetchedAt: Date.now(),
+      };
+    }
+    return sorted.filter((m) => m !== excludeModel);
   } catch {
     return [];
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+async function settleExternalSearch(
+  promise: Promise<Awaited<ReturnType<typeof searchExternalAcademicReferences>>>
+) {
+  return Promise.race([
+    promise,
+    new Promise<Awaited<ReturnType<typeof searchExternalAcademicReferences>>>(
+      (resolve) => setTimeout(() => resolve([]), 800)
+    ),
+  ]);
 }
 
 function getThinkingConfigForModel(
@@ -281,21 +318,34 @@ export async function onRequestPost(
     }
 
     const contents = buildConversationTurns(body);
+    const externalSearchPromise = searchExternalAcademicReferences(
+      message,
+      body.categoryFilter
+    );
 
-    // 1. Try primary model first
+    const activePrimary = preferredModel || DEFAULT_PRIMARY_MODEL;
+
+    // 1. Try preferred/primary model first
     const primaryAttempt = await callGeminiModel(
-      PRIMARY_MODEL,
+      activePrimary,
       apiKey,
       contents,
       PER_MODEL_TIMEOUT_MS
     );
     if (primaryAttempt.ok) {
-      return jsonResponse(parseGeminiJsonOutput(primaryAttempt.text), 200);
+      const externalReferences = await settleExternalSearch(externalSearchPromise);
+      return jsonResponse(
+        {
+          ...parseGeminiJsonOutput(primaryAttempt.text),
+          externalReferences,
+        },
+        200
+      );
     }
 
     let lastStatus = primaryAttempt.status;
     let lastErrorText = primaryAttempt.errorText;
-    let lastModel = PRIMARY_MODEL;
+    let lastModel = activePrimary;
 
     // 2. If auth/invalid key, fail immediately
     if (lastStatus === 400 || lastStatus === 401 || lastStatus === 403) {
@@ -306,8 +356,8 @@ export async function onRequestPost(
       );
     }
 
-    // 3. Dynamically discover live available fallback models (stable GA models prioritized)
-    const fallbackModels = await discoverFallbackModels(apiKey, PRIMARY_MODEL);
+    // 3. Dynamically discover live available fallback models (cached 5m; stable GA prioritized)
+    const fallbackModels = await discoverFallbackModels(apiKey, activePrimary);
     for (const model of fallbackModels) {
       const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
       if (remaining < 2500) {
@@ -321,7 +371,17 @@ export async function onRequestPost(
         Math.min(PER_MODEL_TIMEOUT_MS, remaining)
       );
       if (attempt.ok) {
-        return jsonResponse(parseGeminiJsonOutput(attempt.text), 200);
+        preferredModel = model;
+        const externalReferences = await settleExternalSearch(
+          externalSearchPromise
+        );
+        return jsonResponse(
+          {
+            ...parseGeminiJsonOutput(attempt.text),
+            externalReferences,
+          },
+          200
+        );
       }
       lastStatus = attempt.status;
       lastErrorText = attempt.errorText;

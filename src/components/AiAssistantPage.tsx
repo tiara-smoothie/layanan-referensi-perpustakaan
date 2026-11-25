@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
+  BookOpen,
   Bot,
   Check,
   Copy,
+  ExternalLink,
+  Globe,
   Loader2,
   RotateCcw,
   Search,
@@ -10,7 +13,12 @@ import {
   User,
 } from 'lucide-react';
 import { ACADEMIC_REFERENCES } from '../data/references.ts';
-import type { ChatMessage, CollectionType, ReferenceItem } from '../types.ts';
+import type {
+  ChatMessage,
+  CollectionType,
+  ExternalReference,
+  ReferenceItem,
+} from '../types.ts';
 import { ReferenceCard } from './ReferenceCard.tsx';
 
 interface AiAssistantPageProps {
@@ -55,6 +63,7 @@ export function AiAssistantPage({
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [copiedQuery, setCopiedQuery] = useState<string | null>(null);
+  const [copiedCitationId, setCopiedCitationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
     INITIAL_WELCOME_MESSAGE,
   ]);
@@ -112,6 +121,7 @@ export function AiAssistantPage({
       let data: {
         reply?: string;
         recommendedIds?: string[];
+        externalReferences?: ExternalReference[];
         searchQueries?: string[];
         suggestedTopics?: string[];
         error?: string;
@@ -160,6 +170,9 @@ export function AiAssistantPage({
         recommendedIds: Array.isArray(data.recommendedIds)
           ? data.recommendedIds
           : [],
+        externalReferences: Array.isArray(data.externalReferences)
+          ? data.externalReferences
+          : [],
         searchQueries: Array.isArray(data.searchQueries)
           ? data.searchQueries
           : [],
@@ -206,28 +219,34 @@ export function AiAssistantPage({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  const latestRecommendedIds = useMemo(() => {
+  const latestAiMessage = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
-      const ids = messages[i].recommendedIds;
-      if (ids && ids.length > 0) {
-        return ids;
+      const m = messages[i];
+      if (m.sender === 'assistant' && !m.isError && m.id !== 'welcome') {
+        return m;
       }
     }
-    return ['ref-01', 'ref-03', 'ref-06'];
+    return null;
   }, [messages]);
+
+  const latestRecommendedIds = useMemo(() => {
+    if (latestAiMessage) {
+      return latestAiMessage.recommendedIds || [];
+    }
+    return ['ref-01', 'ref-03', 'ref-06'];
+  }, [latestAiMessage]);
+
+  const latestExternalReferences = useMemo(() => {
+    return latestAiMessage?.externalReferences || [];
+  }, [latestAiMessage]);
 
   const displayedRecommendations = useMemo(() => {
     const recommendedSet = new Set(latestRecommendedIds);
     const ordered = ACADEMIC_REFERENCES.filter((ref) =>
       recommendedSet.has(ref.id)
     );
-    const pool =
-      categoryFilter === 'Semua'
-        ? ordered
-        : ordered.filter((r) => r.type === categoryFilter);
-
-    if (pool.length > 0) return pool;
-    return ACADEMIC_REFERENCES.filter((r) => r.type === categoryFilter);
+    if (categoryFilter === 'Semua') return ordered;
+    return ordered.filter((r) => r.type === categoryFilter);
   }, [latestRecommendedIds, categoryFilter]);
 
   const handleSubmit = (e: FormEvent) => {
@@ -244,6 +263,21 @@ export function AiAssistantPage({
       }, 1800);
     } catch {
       setCopiedQuery(null);
+    }
+  };
+
+  const handleCopyCitation = async (ext: ExternalReference) => {
+    const yearPart = ext.year ? ` (${ext.year})` : '';
+    const doiPart = ext.doi ? ` https://doi.org/${ext.doi}` : ` ${ext.url}`;
+    const citation = `${ext.authors}${yearPart}. ${ext.title}. ${ext.source}.${doiPart}`;
+    try {
+      await navigator.clipboard.writeText(citation);
+      setCopiedCitationId(ext.id);
+      setTimeout(() => {
+        setCopiedCitationId((prev) => (prev === ext.id ? null : prev));
+      }, 1800);
+    } catch {
+      setCopiedCitationId(null);
     }
   };
 
@@ -371,32 +405,64 @@ export function AiAssistantPage({
                   )}
 
                   {msg.searchQueries && msg.searchQueries.length > 0 && (
-                    <div className="mt-3 pt-2.5 border-t border-[#DCE8FF] space-y-1.5">
+                    <div className="mt-3 pt-2.5 border-t border-[#DCE8FF] space-y-2">
                       <p className="text-[11px] font-semibold text-[#102D68]/70 flex items-center gap-1">
                         <Search className="w-3 h-3 text-[#5489E8]" aria-hidden="true" />
-                        <span>Saran Pencarian Database Akademik:</span>
+                        <span>Cari Langsung di Database Akademik:</span>
                       </p>
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         {msg.searchQueries.map((query) => (
-                          <button
+                          <div
                             key={query}
-                            type="button"
-                            onClick={() => void handleCopyQuery(query)}
-                            className="w-full flex items-center justify-between gap-2 text-[11px] font-mono px-2.5 py-1.5 rounded-md bg-[#F3F7FF] hover:bg-[#DCE8FF]/70 text-[#102D68] transition-colors cursor-pointer text-left"
+                            className="rounded-lg bg-[#F3F7FF] px-2.5 py-2 space-y-1.5"
                           >
-                            <span className="truncate">{query}</span>
-                            {copiedQuery === query ? (
-                              <Check
-                                className="w-3.5 h-3.5 text-emerald-700 shrink-0"
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <Copy
-                                className="w-3.5 h-3.5 text-[#5489E8] shrink-0"
-                                aria-hidden="true"
-                              />
-                            )}
-                          </button>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-mono text-[#102D68] truncate">
+                                {query}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyQuery(query)}
+                                title="Salin kueri pencarian"
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#2455B5] hover:text-[#102D68] cursor-pointer shrink-0"
+                              >
+                                {copiedQuery === query ? (
+                                  <>
+                                    <Check
+                                      className="w-3 h-3 text-emerald-700"
+                                      aria-hidden="true"
+                                    />
+                                    <span className="text-emerald-700">Disalin</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" aria-hidden="true" />
+                                    <span>Salin</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <a
+                                href={`https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-[#DCE8FF] text-[10px] font-semibold text-[#2455B5] hover:bg-[#DCE8FF]/60 transition-colors"
+                              >
+                                <span>Google Scholar</span>
+                                <ExternalLink className="w-2.5 h-2.5" aria-hidden="true" />
+                              </a>
+                              <a
+                                href={`https://garuda.kemdikbud.go.id/documents?q=${encodeURIComponent(query)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-[#DCE8FF] text-[10px] font-semibold text-[#2455B5] hover:bg-[#DCE8FF]/60 transition-colors"
+                              >
+                                <span>Garuda</span>
+                                <ExternalLink className="w-2.5 h-2.5" aria-hidden="true" />
+                              </a>
+                            </div>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -431,7 +497,7 @@ export function AiAssistantPage({
                     className="w-4 h-4 animate-spin text-[#2455B5]"
                     aria-hidden="true"
                   />
-                  <span>Menganalisis topik dan mencocokkan katalog...</span>
+                  <span>Menganalisis topik, katalog lokal, dan literatur eksternal...</span>
                 </div>
               </div>
             )}
@@ -464,7 +530,7 @@ export function AiAssistantPage({
         </section>
 
         {/* Right: Recommended References Grid */}
-        <section className="lg:col-span-7 space-y-4">
+        <section className="lg:col-span-7 space-y-5">
           <div className="bg-white rounded-xl px-5 py-4 border border-[#DCE8FF] flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="font-display text-base font-bold text-[#102D68]">
@@ -475,25 +541,124 @@ export function AiAssistantPage({
                 <span className="font-semibold tabular-nums">
                   {displayedRecommendations.length}
                 </span>{' '}
-                referensi{' '}
-                {categoryFilter !== 'Semua'
-                  ? `kategori ${categoryFilter}`
-                  : 'terpilih untuk topik Anda'}
+                koleksi katalog lokal
+                {latestExternalReferences.length > 0 && (
+                  <>
+                    {' '}
+                    dan{' '}
+                    <span className="font-semibold tabular-nums text-[#2455B5]">
+                      {latestExternalReferences.length}
+                    </span>{' '}
+                    referensi eksternal terverifikasi
+                  </>
+                )}
+                {categoryFilter !== 'Semua' ? ` (filter: ${categoryFilter})` : ''}
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {displayedRecommendations.map((ref) => (
-              <ReferenceCard
-                key={ref.id}
-                reference={ref}
-                onViewDetail={onViewDetail}
-                onAddToWorkspace={onAddToWorkspace}
-                isAdded={savedReferenceIds.has(ref.id)}
-              />
-            ))}
-          </div>
+          {latestExternalReferences.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#102D68]">
+                <Globe className="w-4 h-4 text-[#2455B5]" aria-hidden="true" />
+                <span>Referensi Eksternal Terverifikasi (Crossref &amp; OpenAlex)</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {latestExternalReferences.map((ext) => (
+                  <article
+                    key={ext.id}
+                    className="bg-white rounded-xl border border-[#DCE8FF] p-4 shadow-[0_2px_12px_rgba(16,45,104,0.04)] flex flex-col justify-between gap-3"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <span className="px-2 py-0.5 rounded-md bg-[#F3F7FF] text-[#2455B5] text-[11px] font-semibold">
+                          {ext.type}
+                        </span>
+                        <span className="text-[11px] font-medium text-[#102D68]/60">
+                          {ext.provider}
+                          {ext.year ? ` · ${ext.year}` : ''}
+                        </span>
+                      </div>
+
+                      <h3 className="font-display text-sm font-bold text-[#102D68] leading-snug line-clamp-3">
+                        {ext.title}
+                      </h3>
+
+                      <p className="text-xs text-[#102D68]/75 line-clamp-1">
+                        {ext.authors}
+                      </p>
+
+                      <p className="text-[11px] text-[#102D68]/60 line-clamp-1">
+                        {ext.source}
+                      </p>
+
+                      {ext.doi && (
+                        <p className="text-[11px] font-mono text-[#2455B5]/85 truncate">
+                          DOI: {ext.doi}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="pt-2.5 border-t border-[#DCE8FF]/80 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyCitation(ext)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#F3F7FF] hover:bg-[#DCE8FF] text-[#102D68] text-xs font-medium transition-colors cursor-pointer"
+                      >
+                        {copiedCitationId === ext.id ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-700" aria-hidden="true" />
+                            <span className="text-emerald-700">Sitasi Disalin</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5 text-[#5489E8]" aria-hidden="true" />
+                            <span>Salin Sitasi</span>
+                          </>
+                        )}
+                      </button>
+
+                      <a
+                        href={ext.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2455B5] hover:bg-[#102D68] text-white text-xs font-semibold transition-colors"
+                      >
+                        <span>Buka Sumber</span>
+                        <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+                      </a>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {displayedRecommendations.length > 0 ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#102D68]">
+                <BookOpen className="w-4 h-4 text-[#2455B5]" aria-hidden="true" />
+                <span>Koleksi Katalog Perpustakaan LibraMind</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {displayedRecommendations.map((ref) => (
+                  <ReferenceCard
+                    key={ref.id}
+                    reference={ref}
+                    onViewDetail={onViewDetail}
+                    onAddToWorkspace={onAddToWorkspace}
+                    isAdded={savedReferenceIds.has(ref.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-[#DCE8FF] p-5 text-xs text-[#102D68]/75">
+              Tidak ada koleksi lokal LibraMind yang cocok langsung dengan topik atau filter{' '}
+              <span className="font-semibold text-[#102D68]">{categoryFilter}</span>. Gunakan daftar{' '}
+              <span className="font-semibold text-[#2455B5]">Referensi Eksternal Terverifikasi</span> di atas atau tautan Google Scholar / Garuda pada balasan asisten.
+            </div>
+          )}
         </section>
       </div>
     </div>

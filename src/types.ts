@@ -108,11 +108,25 @@ export interface AppNotification {
   statusSnapshot: ValidationStatus;
 }
 
+export interface ExternalReference {
+  id: string;
+  title: string;
+  authors: string;
+  year?: number;
+  source: string;
+  type: string;
+  doi?: string;
+  url: string;
+  isOpenAccess?: boolean;
+  provider: 'Crossref' | 'OpenAlex';
+}
+
 export interface ChatMessage {
   id: string;
   sender: 'user' | 'assistant';
   text: string;
   recommendedIds?: string[];
+  externalReferences?: ExternalReference[];
   searchQueries?: string[];
   suggestedTopics?: string[];
   timestamp: string;
