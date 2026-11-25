@@ -59,12 +59,13 @@ export async function runGeminiAssistant(
 
   const contents = buildConversationTurns(payload);
   let lastError: AssistantErrorResult | null = null;
-  const maxAttempts = 2;
+  const modelsToTry = [MODEL_NAME, 'gemini-3.1-flash-lite'];
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
+    const activeModel = modelsToTry[attempt];
     try {
       const response = await ai.models.generateContent({
-        model: MODEL_NAME,
+        model: activeModel,
         contents,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
@@ -119,8 +120,10 @@ export async function runGeminiAssistant(
         err instanceof Error ? err.message : 'Terjadi kesalahan pada layanan AI.';
       const classified = classifyGeminiError(rawMessage);
       lastError = classified;
-      if (attempt < maxAttempts && classified.status >= 500) {
-        await sleep(500 * attempt);
+      const retryable =
+        classified.status === 429 || classified.status >= 500;
+      if (attempt < modelsToTry.length - 1 && retryable) {
+        await sleep(400);
         continue;
       }
       break;

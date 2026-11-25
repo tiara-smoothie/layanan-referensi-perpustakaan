@@ -98,16 +98,32 @@ export async function onRequestPost(
     let lastStatus = 500;
     let lastErrorText = 'Gagal menghubungi Gemini API.';
 
-    for (const model of CLOUDFLARE_MODELS) {
+    for (let i = 0; i < CLOUDFLARE_MODELS.length; i++) {
+      const model = CLOUDFLARE_MODELS[i];
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-      const geminiRes = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify(requestPayload),
-      });
+
+      let geminiRes: Response;
+      try {
+        geminiRes = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: JSON.stringify(requestPayload),
+        });
+      } catch (networkErr: unknown) {
+        lastStatus = 503;
+        lastErrorText =
+          networkErr instanceof Error
+            ? networkErr.message
+            : 'Koneksi jaringan ke Gemini API terputus.';
+        if (i < CLOUDFLARE_MODELS.length - 1) {
+          await new Promise((r) => setTimeout(r, 350));
+          continue;
+        }
+        break;
+      }
 
       const resText = await geminiRes.text();
       if (!geminiRes.ok) {
@@ -120,10 +136,17 @@ export async function onRequestPost(
         } catch {
           lastErrorText = resText || `HTTP ${geminiRes.status}`;
         }
-        // Only try fallback model if this model wasn't found (404)
-        if (geminiRes.status === 404) {
+
+        const shouldFallback =
+          geminiRes.status === 404 ||
+          geminiRes.status === 429 ||
+          geminiRes.status >= 500;
+
+        if (shouldFallback && i < CLOUDFLARE_MODELS.length - 1) {
+          await new Promise((r) => setTimeout(r, 350));
           continue;
         }
+
         const classified = classifyGeminiError(lastErrorText, lastStatus);
         return jsonResponse({ error: classified.error }, classified.status);
       }

@@ -224,6 +224,19 @@ export function classifyGeminiError(
     };
   }
 
+  if (
+    statusHint === 503 ||
+    lower.includes('high demand') ||
+    lower.includes('unavailable') ||
+    lower.includes('overloaded')
+  ) {
+    return {
+      status: 503,
+      error:
+        'Server Gemini sedang mengalami lonjakan permintaan sementara. Silakan tunggu beberapa detik lalu klik "Coba Kirim Ulang".',
+    };
+  }
+
   return {
     status: statusHint && statusHint >= 400 ? statusHint : 500,
     error: `Gagal menghubungi Asisten AI LibraMind: ${rawMessage}`,
